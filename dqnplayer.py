@@ -66,6 +66,7 @@ class DQNPlayer(Player):
     """
 
     def __init__(self, device, player='X', lr=5e-4, discount=0.99, epsilon=lambda _: 0.05, batch_size=64,
+                 use_replay=True,
                  seed=666):
         super().__init__(epsilon, player, seed)
         self.lr = lr
@@ -78,8 +79,12 @@ class DQNPlayer(Player):
         self.policy_net = DQN(device).to(device)
         self.target_net = DQN(device).to(device)
 
-        self.memory = ReplayMemory(10000)
-        self.batch_size = batch_size
+        self.use_replay = use_replay
+        if use_replay:
+            self.memory = ReplayMemory(10000)
+            self.batch_size = batch_size
+        else:
+            self.batch_size = 1
 
         # Huber loss
         self.criterion = nn.HuberLoss()
@@ -95,27 +100,28 @@ class DQNPlayer(Player):
         --grid: (3, 3, 2) array representing the current state.
         Returns the value of the Huber loss.
         """
-        # Push the last experience into the replay memory
-        self.memory.push(self.last_state, self.last_action, grid, reward)
+        if self.use_replay:
+            # Push the last experience into the replay memory
+            self.memory.push(self.last_state, self.last_action, grid, reward)
 
-        # We don't start learning before the replay memory is large enough to
-        # return at least a full batch
-        if len(self.memory) < self.batch_size:
-            return 0
+            # We don't start learning before the replay memory is large enough to
+            # return at least a full batch
+            if len(self.memory) < self.batch_size:
+                return 0
 
-        # ## Policy network training ==========================================
-        # Taken from the Pytorch RL tutorial
-        # First sample a batch of Transition objects
-        transitions = self.memory.sample(self.batch_size)
-        # Then creates a single Transition obj whose elements are arrays
-        batch = Transition(*zip(*transitions))
+            # ## Policy network training ==========================================
+            # Taken from the Pytorch RL tutorial
+            # First sample a batch of Transition objects
+            transitions = self.memory.sample(self.batch_size)
+            # Then creates a single Transition obj whose elements are arrays
+            batch = Transition(*zip(*transitions))
+        else:
+            batch = Transition([self.last_state], [self.last_action],
+                               [grid], [reward])
 
         state_batch = torch.cat(batch.state)
         action_batch = torch.cat(batch.action)
         reward_batch = torch.cat(batch.reward)
-        # Contains only the next states when they were not final
-        non_final_next_states = torch.cat([ns for ns in batch.next_state if ns is not None])
-        non_final_mask = [ns is not None for ns in batch.next_state]
 
         # Computes the state-action values for all actions for all states in
         # the batch
@@ -126,12 +132,17 @@ class DQNPlayer(Player):
 
         # We now need to compute max_a Q(s', a)
         next_state_qvalues = torch.zeros(self.batch_size, device=self.device)
-        # We'll set it to zero for final states
-        # Make sure to use the target network (not the policy) for
-        # training stability.
-        # Note that tensor.max(dim=...) returns a namedtuple (values, indices)
-        next_state_qvalues[non_final_mask] = \
-            self.target_net(non_final_next_states).max(dim=1).values
+        # Contains only the next states when they were not final
+        non_final_next_states= [ns for ns in batch.next_state if ns is not None]
+        if non_final_next_states:
+            non_final_next_states = torch.cat(non_final_next_states)
+            non_final_mask = [ns is not None for ns in batch.next_state]
+            # We'll set it to zero for final states
+            # Make sure to use the target network (not the policy) for
+            # training stability.
+            # Note that tensor.max(dim=...) returns a namedtuple (values, indices)
+            next_state_qvalues[non_final_mask] = \
+                self.target_net(non_final_next_states).max(dim=1).values
         # Detach the next state values from the gradient graph as it will be
         # used as the target in the computation of the loss (We consider it as
         # the "true qvalue" and hope to converge towards the Bellman equation).
