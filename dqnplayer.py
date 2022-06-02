@@ -65,9 +65,9 @@ class DQNPlayer(Player):
     to learn the tictactoe strategy.
     """
 
-    def __init__(self, device, player='X', lr=5e-4, discount=0.99, epsilon=0.05, batch_size=64,
+    def __init__(self, device, player='X', lr=5e-4, discount=0.99, epsilon=lambda _: 0.05, batch_size=64,
                  seed=666):
-        super().__init__(player, epsilon, seed)
+        super().__init__(epsilon, player, seed)
         self.lr = lr
         self.discount = discount
         self.device = device
@@ -156,7 +156,7 @@ class DQNPlayer(Player):
         state_dict = self.policy_net.state_dict()
         self.target_net.load_state_dict(state_dict)
 
-    def act(self, grid):
+    def act(self, grid, iteration):
         """
         Chooses the action to perform by taking that which returns the
         best qvalue, as estimated by the policy network.
@@ -166,7 +166,7 @@ class DQNPlayer(Player):
         # somehow
         with torch.no_grad():
             # Check whether the epsilon-greedy choice activates
-            if self.rng_.random() < self.epsilon:
+            if self.rng_.random() < self.epsilon(iteration):
                 action = torch.tensor([[self.rng_.integers(0, 9)]], device=self.device)
             else:
                 qvalues = self.policy_net(grid)
