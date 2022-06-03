@@ -66,7 +66,7 @@ class DQNPlayer(Player):
     """
 
     def __init__(self, device, player='X', lr=5e-4, discount=0.99, epsilon=lambda _: 0.05, batch_size=64,
-                 use_replay=True,
+                 use_replay=True, use_agent_weights=None,
                  seed=666):
         super().__init__(epsilon, player, seed)
         self.lr = lr
@@ -76,21 +76,29 @@ class DQNPlayer(Player):
         self.last_action, self.last_state = None, None
 
         # Neural networks
-        self.policy_net = DQN(device).to(device)
-        self.target_net = DQN(device).to(device)
+        self.uses_external_weights = use_agent_weights is not None
+        if not self.uses_external_weights:
+            self.policy_net = DQN(device).to(device)
+            self.target_net = DQN(device).to(device)
 
-        self.use_replay = use_replay
-        if use_replay:
-            self.memory = ReplayMemory(10000)
-            self.batch_size = batch_size
+            self.use_replay = use_replay
+            if use_replay:
+                self.memory = ReplayMemory(10000)
+                self.batch_size = batch_size
+            else:
+                self.batch_size = 1
+
+            # Huber loss
+            self.criterion = nn.HuberLoss()
+            # Adam optimizer
+            self.optimizer = torch.optim.Adam(self.policy_net.parameters(),
+                                              lr=self.lr)
         else:
-            self.batch_size = 1
-
-        # Huber loss
-        self.criterion = nn.HuberLoss()
-        # Adam optimizer
-        self.optimizer = torch.optim.Adam(self.policy_net.parameters(),
-                                          lr=self.lr)
+            if not use_replay:
+                raise ValueError('A DQN agent must use the replay memory if it using external weights')
+            self.memory = use_agent_weights.memory
+            self.policy_net = use_agent_weights.policy_net
+            self.target_net = use_agent_weights.target_net
 
     def learn(self, reward, grid):
         """
@@ -100,10 +108,12 @@ class DQNPlayer(Player):
         --grid: (3, 3, 2) array representing the current state.
         Returns the value of the Huber loss.
         """
+        self.memory.push(self.last_state, self.last_action, grid, reward)
+        # An agent that uses external weights does not actually learn, it only
+        # adds its experience to the memory
+        if self.uses_external_weights:
+            return None
         if self.use_replay:
-            # Push the last experience into the replay memory
-            self.memory.push(self.last_state, self.last_action, grid, reward)
-
             # We don't start learning before the replay memory is large enough to
             # return at least a full batch
             if len(self.memory) < self.batch_size:
