@@ -201,3 +201,10 @@ class DQNPlayer(Player):
             self.last_state = torch.clone(grid)
             self.last_action = action
             return int(action.item())
+
+    def get_qvalues(self, grid):
+        """
+        For a given state, returns the Q-value associated with each action.
+        """
+        with torch.no_grad():
+            return self.policy_net(grid).cpu().numpy()
